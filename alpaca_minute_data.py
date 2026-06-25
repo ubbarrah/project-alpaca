@@ -22,6 +22,7 @@ Ctrl+C to stop the live stream.
 
 import os
 import sys
+import signal
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -138,6 +139,26 @@ def print_historical_table(df, symbol):
 def stream_live_minute_bars(symbol):
     # same IEX-feed entitlement constraint applies to the live websocket
     stream = StockDataStream(API_KEY, SECRET_KEY, feed=DataFeed.IEX)
+
+    # StockDataStream.run() swallows KeyboardInterrupt internally and then
+    # tries to gracefully shut down its asyncio event loop / websocket
+    # connection in a `finally` block - that shutdown is what actually hangs
+    # on Ctrl+C, not our own except/finally below (which never even gets a
+    # chance to run, since the exception never reaches us). Installing a raw
+    # SIGINT handler that hard-exits the process sidesteps that cleanup
+    # entirely instead of waiting on it.
+    #
+    # IMPORTANT: this handler must NOT touch `console`/`live` - rich's Live
+    # display runs a background refresh thread that holds a render lock, and
+    # if SIGINT lands while that lock is held, any console.print() call here
+    # would block forever waiting on it, silently defeating the whole point
+    # of this handler. Write straight to the raw file descriptor instead and
+    # exit immediately - no locks, no rich, nothing that can hang.
+    def _force_quit(sig, frame):
+        os.write(2, b"\nStopping...\n")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _force_quit)
 
     with Live(
         build_minute_table(symbol, recent_bars, title_suffix=" - live (updates every minute)"),

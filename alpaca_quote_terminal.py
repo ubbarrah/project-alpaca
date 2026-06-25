@@ -29,12 +29,13 @@ Type "q" + Enter to quit. Note: stocks only update during market hours
 import os
 import sys
 import queue
+import signal
 import threading
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, Sort
+from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.data.live import StockDataStream
 from alpaca.data.enums import DataFeed
@@ -108,21 +109,26 @@ class StreamWorker(threading.Thread):
             pass
 
 
-def get_5min_bars(symbol, days=30, limit=1000):
-    """Fetch up to `limit` 5-minute OHLCV bars over the last `days` days, oldest-to-newest."""
+def get_5min_bars(symbol, days=30):
+    """
+    Fetch all 5-minute OHLCV bars over the last `days` calendar days,
+    oldest-to-newest. No artificial cap on bar count - whatever the market
+    actually produced in that window (roughly 2000-2500 bars for 30 days
+    of regular trading hours, fewer around holidays).
+    """
     now_utc = datetime.now(timezone.utc)
     request = StockBarsRequest(
         symbol_or_symbols=symbol,
         timeframe=TimeFrame(5, TimeFrameUnit.Minute),
         start=now_utc - timedelta(days=days),
         end=now_utc,
-        limit=limit,
-        sort=Sort.DESC,  # newest-first from the API, capped at `limit`...
+        # no `limit` - the SDK auto-paginates and returns everything in
+        # the start/end window instead of capping at a fixed bar count
         feed=DataFeed.IEX,
     )
     bars = data_client.get_stock_bars(request)
     df = bars.df.xs(symbol, level=0)
-    df = df.sort_index(ascending=True)  # ...then flip to chronological order for plotting
+    df = df.sort_index(ascending=True)  # chronological order for plotting
     return df
 
 
@@ -150,6 +156,24 @@ def plot_historical_chart(df, symbol):
     plt.tight_layout()
     console.print("[dim]Close the chart window to continue to live bid/ask streaming...[/dim]")
     plt.show()
+
+    # matplotlib's interactive backends (TkAgg included) temporarily take
+    # over SIGINT - and the signal "wakeup fd" used to interrupt blocking
+    # event loops - while a chart window is open, so that Ctrl+C can close
+    # the plot (see matplotlib.backend_bases._allow_interrupt). It's meant to
+    # hand control back to whatever was there before once the window closes,
+    # but that hand-back doesn't always leave things clean, which is the
+    # likely reason Ctrl+C stops working in whatever runs after this chart
+    # (e.g. the live data view in main.py) even though that same code closes
+    # fine with Ctrl+C when run on its own, without a chart in front of it.
+    # Explicitly reset both back to plain Python defaults here so downstream
+    # code gets a clean slate to install its own handler on.
+    try:
+        signal.set_wakeup_fd(-1)
+    except (ValueError, OSError):
+        pass
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    plt.close("all")
 
 
 def input_reader():
@@ -187,8 +211,8 @@ def switch_symbol(symbol, worker_holder):
     if worker_holder["worker"] is not None:
         worker_holder["worker"].stop()
 
-    console.print(f"\nFetching 30+ days of 5-minute OHLCV bars for [bold]{symbol}[/bold] (up to 1000 bars)...")
-    df = get_5min_bars(symbol, days=30, limit=1000)
+    console.print(f"\nFetching 30 days of 5-minute OHLCV bars for [bold]{symbol}[/bold]...")
+    df = get_5min_bars(symbol, days=30)
     console.print(f"Got {len(df)} bars. Plotting chart...")
     plot_historical_chart(df, symbol)
 
