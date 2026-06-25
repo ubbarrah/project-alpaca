@@ -5,10 +5,11 @@ back-to-back for one ticker:
 1. Pulls 30 days of 5-minute OHLCV bars and plots the matplotlib chart
    (reusing alpaca_quote_terminal.get_5min_bars / plot_historical_chart).
 2. Once you close the chart window, it does NOT continue into
-   alpaca_quote_terminal's live bid/ask panel (the "rectangular box" UI
-   whose background websocket thread was prone to freezing on Ctrl+C).
-   Instead it jumps straight to alpaca_minute_data's live OHLCV table,
-   which streams new minute bars in the simpler, easy-to-Ctrl+C-quit style.
+   alpaca_quote_terminal's own live bid/ask panel (the threaded
+   StreamWorker version that was prone to freezing on Ctrl+C). Instead it
+   jumps to alpaca_minute_data's version of that same bid/ask/last-trade
+   panel, which streams synchronously in the main thread and exits cleanly
+   on Ctrl+C.
 
 Setup:
     pip install alpaca-py python-dotenv rich matplotlib
@@ -39,17 +40,16 @@ def main():
     qt.console.print(f"Got {len(df)} bars. Plotting chart...")
     qt.plot_historical_chart(df, symbol)
 
-    # --- Step 2: skip the bid/ask live panel entirely, go straight to ---
-    # --- alpaca_minute_data's simpler live OHLCV table ---
+    # --- Step 2: historical 1-minute OHLCV table, then the live ---
+    # --- bid/ask/last-trade rectangle panel (alpaca_minute_data) ---
     md.console.print(f"\nFetching last 100 one-minute OHLCV bars for [bold]{symbol}[/bold]...\n")
     minute_df = md.get_last_100_minute_bars(symbol)
     md.print_historical_table(minute_df, symbol)
 
     md.console.print(
-        f"Streaming live minute bars for [bold]{symbol}[/bold] "
-        f"(new candle every ~60s, Ctrl+C to stop)...\n"
+        f"Streaming live bid/ask/last-trade for [bold]{symbol}[/bold] (Ctrl+C to stop)...\n"
     )
-    md.stream_live_minute_bars(symbol)
+    md.stream_live_quotes(symbol)
 
 
 if __name__ == "__main__":

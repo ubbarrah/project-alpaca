@@ -1,0 +1,31 @@
+# Alpaca paper-trading market data toolkit - setup
+#
+# 1. (Recommended) create and activate a virtual environment:
+#      python3 -m venv venv
+#      source venv/bin/activate        # Windows: venv\Scripts\activate
+#
+# 2. Install dependencies:
+#      pip install -r requirements.txt
+#
+# 3. Create a .env file in this same folder with your Alpaca PAPER keys
+#    (from https://app.alpaca.markets/paper/dashboard/overview):
+#      ALPACA_API_KEY=your_key_id
+#      ALPACA_SECRET_KEY=your_secret_key
+#
+# 4. Run:
+#      python main.py AAPL
+#      python main.py              (prompts for a ticker)
+#
+#    This shows a 30-day 5-minute OHLCV chart (close the window to continue),
+#    then a 100-bar 1-minute OHLCV table, then live bid/ask/last-trade.
+#    Ctrl+C to stop.
+#
+#    Individual scripts can also be run on their own:
+#      python alpaca_auth.py             - paper account auth check
+#      python alpaca_quote_terminal.py AAPL   - chart only
+#      python alpaca_minute_data.py AAPL      - minute bars + live quote panel
+
+alpaca-py>=0.33
+python-dotenv>=1.0
+rich>=13.0
+matplotlib>=3.8

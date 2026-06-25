@@ -1,10 +1,11 @@
 """
-Alpaca market data: 100 historical 1-minute OHLCV bars + live 1-minute bar
-streaming (instead of tick-level bid/ask quotes).
+Alpaca market data: 100 historical 1-minute OHLCV bars, then a live
+bid/ask/last-trade panel (the "rectangle box" UI) instead of streaming new
+minute bars into the table.
 
-Each "data point" here is a full OHLCV candle for one minute, not a single
-quote tick. The live section listens for newly-closed minute bars and
-updates the table once per minute as the market generates them.
+The historical section is still a full OHLCV candle per minute. The live
+section switches to tick-level quotes/trades and renders them in a single
+rich Panel that updates in place as new bid/ask/last-trade data arrives.
 
 Setup:
     pip install alpaca-py python-dotenv rich
@@ -36,6 +37,7 @@ from alpaca.data.enums import DataFeed
 from rich.live import Live
 from rich.table import Table
 from rich.console import Console
+from rich.panel import Panel
 
 load_dotenv()
 
@@ -52,9 +54,16 @@ data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 
 SYMBOL = sys.argv[1].strip().upper() if len(sys.argv) > 1 else "AAPL"
 
-# rolling buffer of recent minute bars, shared between historical fetch and
-# the live stream, so the live table always shows the most recent 15 minutes
+# rolling buffer of recent minute bars, used by the historical table
 recent_bars = []  # list of dicts: {timestamp, open, high, low, close, volume}
+
+# live bid/ask/last-trade state, used by the rectangle panel
+quote_state = {
+    "bid": None,
+    "ask": None,
+    "last_trade": None,
+    "updated": "-",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +142,24 @@ def print_historical_table(df, symbol):
 
 
 # ---------------------------------------------------------------------------
-# 2. Live - new minute bar streamed in as it closes each minute
+# 2. Live - bid/ask/last-trade rectangle panel (replaces the minute-bar table)
 # ---------------------------------------------------------------------------
 
-def stream_live_minute_bars(symbol):
+def build_quote_panel(symbol, state, status):
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+
+    table.add_row("Symbol:", symbol)
+    table.add_row("Bid:", f"${state['bid']:.2f}" if state["bid"] is not None else "-")
+    table.add_row("Ask:", f"${state['ask']:.2f}" if state["ask"] is not None else "-")
+    table.add_row("Last Trade:", f"${state['last_trade']:.2f}" if state["last_trade"] is not None else "-")
+    table.add_row("Updated:", state["updated"])
+
+    return Panel(table, title="Alpaca Live Quotes", subtitle=status, subtitle_align="left")
+
+
+def stream_live_quotes(symbol):
     # same IEX-feed entitlement constraint applies to the live websocket
     stream = StockDataStream(API_KEY, SECRET_KEY, feed=DataFeed.IEX)
 
@@ -146,7 +169,10 @@ def stream_live_minute_bars(symbol):
     # on Ctrl+C, not our own except/finally below (which never even gets a
     # chance to run, since the exception never reaches us). Installing a raw
     # SIGINT handler that hard-exits the process sidesteps that cleanup
-    # entirely instead of waiting on it.
+    # entirely instead of waiting on it. This stream also runs synchronously
+    # in the main thread (no background StreamWorker thread like the old
+    # alpaca_quote_terminal panel had) - that threaded design was the one
+    # that used to freeze on Ctrl+C.
     #
     # IMPORTANT: this handler must NOT touch `console`/`live` - rich's Live
     # display runs a background refresh thread that holds a render lock, and
@@ -160,30 +186,29 @@ def stream_live_minute_bars(symbol):
 
     signal.signal(signal.SIGINT, _force_quit)
 
+    status = f"Streaming {symbol}... (Ctrl+C to stop)"
+
     with Live(
-        build_minute_table(symbol, recent_bars, title_suffix=" - live (updates every minute)"),
-        refresh_per_second=1,
+        build_quote_panel(symbol, quote_state, status),
+        refresh_per_second=4,
         console=console,
     ) as live:
 
-        async def on_bar(data):
-            # insert at the front so the newest bar is always on top
-            recent_bars.insert(
-                0,
-                {
-                    "timestamp": data.timestamp.replace(tzinfo=timezone.utc).astimezone(),
-                    "open": data.open,
-                    "high": data.high,
-                    "low": data.low,
-                    "close": data.close,
-                    "volume": data.volume,
-                },
-            )
-            live.update(
-                build_minute_table(symbol, recent_bars, title_suffix=" - live (updates every minute)")
-            )
+        async def on_quote(data):
+            if data.bid_price is not None:
+                quote_state["bid"] = data.bid_price
+            if data.ask_price is not None:
+                quote_state["ask"] = data.ask_price
+            quote_state["updated"] = datetime.now(timezone.utc).astimezone().strftime("%I:%M:%S %p")
+            live.update(build_quote_panel(symbol, quote_state, status))
 
-        stream.subscribe_bars(on_bar, symbol)
+        async def on_trade(data):
+            quote_state["last_trade"] = data.price
+            quote_state["updated"] = datetime.now(timezone.utc).astimezone().strftime("%I:%M:%S %p")
+            live.update(build_quote_panel(symbol, quote_state, status))
+
+        stream.subscribe_quotes(on_quote, symbol)
+        stream.subscribe_trades(on_trade, symbol)
 
         try:
             stream.run()
@@ -199,10 +224,9 @@ def main():
     print_historical_table(df, SYMBOL)
 
     console.print(
-        f"Streaming live minute bars for [bold]{SYMBOL}[/bold] "
-        f"(new candle every ~60s, Ctrl+C to stop)...\n"
+        f"Streaming live bid/ask/last-trade for [bold]{SYMBOL}[/bold] (Ctrl+C to stop)...\n"
     )
-    stream_live_minute_bars(SYMBOL)
+    stream_live_quotes(SYMBOL)
 
 
 if __name__ == "__main__":
