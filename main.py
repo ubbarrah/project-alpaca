@@ -39,7 +39,6 @@ import subprocess
 import alpaca_quote_terminal as qt
 import alpaca_minute_data as md
 
-
 def main():
     symbol = sys.argv[1].strip().upper() if len(sys.argv) > 1 else input("Enter ticker symbol: ").strip().upper()
     if not symbol:
