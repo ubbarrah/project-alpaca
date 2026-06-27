@@ -17,15 +17,18 @@
 #      python main.py              (prompts for a ticker)
 #
 #    This shows a 30-day 5-minute OHLCV chart (close the window to continue),
-#    then a 100-bar 1-minute OHLCV table, then live bid/ask/last-trade.
-#    Ctrl+C to stop.
+#    then a 100-bar 1-minute OHLCV table, then opens a Streamlit web app in
+#    your browser with live bid/ask/last-trade prices. Ctrl+C in the
+#    terminal to stop once the web app is running.
 #
 #    Individual scripts can also be run on their own:
-#      python alpaca_auth.py             - paper account auth check
-#      python alpaca_quote_terminal.py AAPL   - chart only
-#      python alpaca_minute_data.py AAPL      - minute bars + live quote panel
+#      python alpaca_auth.py                    - paper account auth check
+#      python alpaca_quote_terminal.py AAPL      - chart only
+#      python alpaca_minute_data.py AAPL         - minute bars + live quote panel (terminal)
+#      streamlit run alpaca_quote_streamlit.py -- AAPL   - live bid/ask web app only
 
 alpaca-py>=0.33
 python-dotenv>=1.0
 rich>=13.0
 matplotlib>=3.8
+streamlit>=1.30
